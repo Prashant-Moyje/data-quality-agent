@@ -5,7 +5,7 @@
 You give it a CSV. It gives you a severity-ranked list of data quality problems, each backed by evidence it actually measured — plus a runnable cleaning script.
 
 ```bash
-data-detective data/messy_customers.csv --context "Customer churn export. Target is `churned`."
+data-detective data/messy_customers.csv --context "Customer churn export. Target column is churned."
 ```
 
 ---
