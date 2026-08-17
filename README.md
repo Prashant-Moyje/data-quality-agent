@@ -71,12 +71,13 @@ data-detective data/messy_customers.csv --context "Customer churn export. Target
 **Requires Python 3.10+ and an Anthropic API key** ([console.anthropic.com](https://console.anthropic.com/settings/keys)).
 
 ```bash
-git clone <your-repo-url> && cd data-detective
+git clone https://github.com/Prashant-Moyje/data-detective.git
+cd data-detective
 
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-cp .env.example .env
+cp .env.example .env                  # Windows cmd: copy .env.example .env
 # open .env and paste your ANTHROPIC_API_KEY
 
 python scripts/make_sample_data.py    # generates data/messy_customers.csv
