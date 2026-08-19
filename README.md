@@ -156,28 +156,28 @@ Also: uploads are size-capped and streamed to disk, the user's filename is never
 
 ## Project structure
 
+```
 ground-truth/
-+-- src/ground_truth/
-| +-- config.py # fail-fast settings from .env
-| +-- logging_setup.py # structlog
-| +-- schemas.py # Pydantic contracts + report rendering
-| +-- profiler.py # deterministic stats - the agent's ground truth
-| +-- sandbox.py # AST validation + isolated execution <- security core
-| +-- _runner.py # the child process (never imported by app code)
-| +-- llm.py # provider abstraction (Ollama / Anthropic)
-| +-- tools.py # tool schemas + dispatch + findings ledger
-| +-- memory.py # transcript trimming
-| +-- agent.py # the loop <- logic core
-| +-- api.py # FastAPI
-| +-- ui.py # Streamlit
-| +-- cli.py # CLI
-+-- scripts/
-| +-- make_sample_data.py
-| +-- demo_sandbox.py
-+-- tests/
-+-- data/
+├── src/ground_truth/
+│   ├── __init__.py
+│   ├── config.py         # fail-fast settings from .env
+│   ├── logging_setup.py  # structlog
+│   ├── schemas.py        # Pydantic contracts + report rendering
+│   ├── profiler.py       # deterministic stats — the agent's ground truth
+│   ├── sandbox.py        # AST validation + isolated execution   ← security core
+│   ├── _runner.py        # the sandbox child process (never imported by app code)
+│   ├── llm.py            # provider abstraction: Ollama / Anthropic
+│   ├── tools.py          # tool schemas + dispatch + findings ledger
+│   ├── memory.py         # provider-neutral transcript + trimming
+│   ├── agent.py          # the loop                              ← logic core
+│   ├── api.py            # FastAPI backend
+│   ├── ui.py             # Streamlit front end
+│   └── cli.py            # command-line entry point
+├── scripts/
+│   ├── make_sample_data.py   # generates the 9-defect evaluation dataset
+│   └──
 
-
+```
 ---
 
 ## Known limitations
