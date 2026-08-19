@@ -32,7 +32,7 @@ setup_logging(settings.log_level, settings.log_json)
 log = get_logger(__name__)
 
 app = FastAPI(
-    title="Data Detective",
+    title="Ground Truth",
     description="An autonomous agent that audits datasets for quality problems.",
     version="0.1.0",
 )

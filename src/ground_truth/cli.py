@@ -1,4 +1,4 @@
-"""Command-line entry point: `python -m data_detective.cli data/messy_customers.csv`
+"""Command-line entry point: `python -m ground_truth.cli data/messy_customers.csv`
 
 Useful for CI, for demoing without two servers running, and for debugging the
 agent loop with full logs visible.

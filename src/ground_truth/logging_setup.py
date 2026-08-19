@@ -36,5 +36,5 @@ def setup_logging(level: str = "INFO", json_logs: bool = False) -> None:
     )
 
 
-def get_logger(name: str = "data_detective"):
+def get_logger(name: str = "ground_truth"):
     return structlog.get_logger(name)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from data_detective.sandbox import UnsafeCodeError, run_snippet, validate_code
+from ground_truth.sandbox import UnsafeCodeError, run_snippet, validate_code
 
 
 # ---------- Layer 1: static analysis ----------

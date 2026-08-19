@@ -4,7 +4,7 @@ It is a thin client over the HTTP API — it holds no agent logic. That
 separation is deliberate: it proves the backend is genuinely reusable (a cron
 job or another service could call it), and it keeps the demo honest.
 
-Run with:  streamlit run src/data_detective/ui.py
+Run with:  streamlit run src/ground_truth/ui.py
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ SEVERITY_COLOR = {
     "low": "#3a6b35",
 }
 
-st.set_page_config(page_title="Data Detective", page_icon="🔎", layout="wide")
-st.title("🔎 Data Detective")
+st.set_page_config(page_title="Ground Truth", page_icon="🔎", layout="wide")
+st.title("🔎 Ground Truth")
 st.caption("An agent that investigates your dataset and tells you what's wrong with it.")
 
 with st.sidebar:
@@ -42,7 +42,7 @@ with st.sidebar:
         h = requests.get(f"{API_URL}/health", timeout=3).json()
         st.success(f"API up · {h.get('model')}")
     except Exception:
-        st.error(f"API unreachable at {API_URL}\n\nStart it with:\n`uvicorn data_detective.api:app`")
+        st.error(f"API unreachable at {API_URL}\n\nStart it with:\n`uvicorn ground_truth.api:app`")
 
 uploaded = st.file_uploader("Dataset", type=["csv", "parquet", "xlsx"])
 context = st.text_area(

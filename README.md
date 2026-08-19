@@ -1,11 +1,11 @@
-#  Data Detective
+#  Ground Truth
 
 **An autonomous agent that audits a dataset the way a senior data scientist would: it forms hypotheses about what's broken, writes its own pandas code to test them, runs that code in a sandbox, and reports only what it can prove with numbers.**
 
 You give it a CSV. It gives you a severity-ranked list of data quality problems, each backed by evidence it actually measured  plus a runnable cleaning script.
 
 ```bash
-data-detective data/messy_customers.csv --context "Customer churn export. Target column is churned."
+ground-truth data/messy_customers.csv --context "Customer churn export. Target column is churned."
 ```
 
 ---
@@ -71,8 +71,8 @@ data-detective data/messy_customers.csv --context "Customer churn export. Target
 **Requires Python 3.10+ and [Ollama](https://ollama.com/download). No API key, no account, no cost - the model runs on your machine.**
 
 ```bash
-git clone https://github.com/Prashant-Moyje/data-detective.git
-cd data-detective
+git clone https://github.com/Prashant-Moyje/ground-truth.git
+cd ground-truth
 
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
@@ -89,14 +89,14 @@ python scripts/make_sample_data.py    # generates data/messy_customers.csv
 
 **1. CLI (fastest to demo)**
 ```bash
-data-detective data/messy_customers.csv \
+ground-truth data/messy_customers.csv \
   --context "Customer churn export from our CRM. Target is churned. One row per customer." \
   --out report.md --fix-script cleanup.py
 ```
 
 **2. API**
 ```bash
-uvicorn data_detective.api:app --reload
+uvicorn ground_truth.api:app --reload
 # docs at http://127.0.0.1:8000/docs
 
 curl -X POST http://127.0.0.1:8000/audits \
@@ -109,8 +109,8 @@ curl http://127.0.0.1:8000/audits/a1b2c3d4e5f6
 
 **3. Full UI** (two terminals)
 ```bash
-uvicorn data_detective.api:app          # terminal 1
-streamlit run src/data_detective/ui.py  # terminal 2 -> localhost:8501
+uvicorn ground_truth.api:app          # terminal 1
+streamlit run src/ground_truth/ui.py  # terminal 2 -> localhost:8501
 ```
 
 ### Tests
@@ -156,8 +156,8 @@ Also: uploads are size-capped and streamed to disk, the user's filename is never
 
 ## Project structure
 
-data-detective/
-+-- src/data_detective/
+ground-truth/
++-- src/ground_truth/
 | +-- config.py # fail-fast settings from .env
 | +-- logging_setup.py # structlog
 | +-- schemas.py # Pydantic contracts + report rendering

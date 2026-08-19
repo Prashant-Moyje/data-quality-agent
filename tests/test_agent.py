@@ -13,12 +13,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from data_detective.agent import AuditAgent
-from data_detective.llm import LLMResponse, ToolCall
-from data_detective.config import Settings
-from data_detective.memory import ELIDED, Transcript
-from data_detective.profiler import profile_dataframe
-from data_detective.tools import ToolBox
+from ground_truth.agent import AuditAgent
+from ground_truth.llm import LLMResponse, ToolCall
+from ground_truth.config import Settings
+from ground_truth.memory import ELIDED, Transcript
+from ground_truth.profiler import profile_dataframe
+from ground_truth.tools import ToolBox
 
 
 @pytest.fixture
