@@ -26,25 +26,23 @@ ground-truth data/messy_customers.csv --context "Customer churn export. Target c
 ## Architecture
 
 ```
-                    
-   CSV upload     profiler.py   deterministic facts (no LLM)
-                    
-                           
-        
-                    agent.py loop             
-                                              
-           Claude  picks a tool         
-                                            
-                             
-                              run_pandas   sandbox.py  subprocess
-                            record_finding Pydantic validation
-                             finish_audit  
-                             
-               tool result          
-                   (budget-capped)            
-        
-                           
-              AuditReport    markdown report + fix_script.py
+                    +--------------+
+   CSV upload  ---> |  profiler.py |  deterministic facts (no LLM)
+                    +------+-------+
+                           |
+                           v
+        +--------------------------------------+
+        |            agent.py loop             |
+        |                                      |
+        |    LLM  ---> picks a tool ---+       |
+        |     ^                        |       |
+        |     |                        v       |
+        |     |              +----------------+|
+        |     |              |  run_pandas    |+---> sandbox.py ---> subprocess
+        |     |              | record_finding |+---> Pydantic validation
+        |     |              |  finish_audit  ||
+        |     |              +--------+-------+|
+        |     +--- tool result
 ```
 
 **Flow:** profile deterministically  agent hypothesises  sandboxed execution  validated findings  structured report.
