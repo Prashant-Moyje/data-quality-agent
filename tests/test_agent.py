@@ -9,12 +9,12 @@ budgets and terminate? — with the model stubbed out.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
 from data_detective.agent import AuditAgent
+from data_detective.llm import LLMResponse, ToolCall
 from data_detective.config import Settings
 from data_detective.memory import ELIDED, Transcript
 from data_detective.profiler import profile_dataframe
@@ -86,80 +86,66 @@ def test_unknown_tool_is_handled_gracefully(toolbox: ToolBox):
 
 # ---------- memory ----------
 
-def test_old_tool_results_are_elided_but_blocks_survive():
-    """Deleting a tool_result block would be an API 400. We elide content only."""
+def test_old_tool_results_are_elided_but_entries_survive():
+    """Content is blanked; the result entries themselves must never be dropped."""
     t = Transcript(keep_full_results=2)
     for i in range(5):
-        t.add_assistant([{"type": "tool_use", "id": f"tu_{i}", "name": "run_pandas", "input": {}}])
-        t.add_tool_results([{"type": "tool_result", "tool_use_id": f"tu_{i}", "content": f"BIG OUTPUT {i}"}])
+        t.add_assistant("", [ToolCall(id=f"c{i}", name="run_pandas", arguments={})])
+        t.add_tool_results(
+            [{"id": f"c{i}", "name": "run_pandas", "content": f"BIG OUTPUT {i}", "is_error": False}]
+        )
 
-    api_msgs = t.for_api()
+    msgs = t.for_api()
 
-    tool_use_ids = {
-        b["id"] for m in api_msgs for b in m["content"] if b.get("type") == "tool_use"
-    }
-    tool_result_ids = {
-        b["tool_use_id"] for m in api_msgs for b in m["content"] if b.get("type") == "tool_result"
-    }
-    assert tool_use_ids == tool_result_ids  # every call still has an answer
+    call_ids = {c.id for m in msgs if m["role"] == "assistant" for c in m["tool_calls"]}
+    result_ids = {r["id"] for m in msgs if m["role"] == "tool_results" for r in m["results"]}
+    assert call_ids == result_ids  # every call still has an answer
 
-    contents = [
-        b["content"] for m in api_msgs for b in m["content"] if b.get("type") == "tool_result"
-    ]
-    assert contents[:3] == [ELIDED] * 3     # old ones elided
-    assert contents[3:] == ["BIG OUTPUT 3", "BIG OUTPUT 4"]  # recent ones intact
+    contents = [r["content"] for m in msgs if m["role"] == "tool_results" for r in m["results"]]
+    assert contents[:3] == [ELIDED] * 3
+    assert contents[3:] == ["BIG OUTPUT 3", "BIG OUTPUT 4"]
 
 
 # ---------- the loop, with a fake model ----------
 
-def _blocks(*specs):
-    out = []
-    for kind, payload in specs:
-        if kind == "text":
-            out.append(SimpleNamespace(type="text", text=payload,
-                                       model_dump=lambda exclude_none=True, p=payload: {"type": "text", "text": p}))
-        else:
-            name, tool_input = payload
-            tid = f"tu_{id(payload)}"
-            out.append(SimpleNamespace(
-                type="tool_use", id=tid, name=name, input=tool_input,
-                model_dump=lambda exclude_none=True, t=tid, n=name, i=tool_input: {
-                    "type": "tool_use", "id": t, "name": n, "input": i},
-            ))
-    return out
+def _call(name, args):
+    return ToolCall(id=f"c_{name}_{len(args)}", name=name, arguments=args)
 
 
-class FakeMessages:
-    """Replays a fixed script of model responses."""
+class FakeProvider:
+    """Replays a fixed script. Substitutes for a real model in tests."""
+
+    name = "fake"
+    model = "fake-1"
 
     def __init__(self, script):
         self.script = list(script)
         self.calls = 0
 
-    def create(self, **kwargs):
+    def complete(self, system, messages, tools):
         self.calls += 1
-        content = self.script.pop(0) if self.script else _blocks(("text", "done"))
-        return SimpleNamespace(
-            content=content,
-            stop_reason="tool_use",
-            usage=SimpleNamespace(input_tokens=100, output_tokens=50, cache_read_input_tokens=0),
-        )
+        if self.script:
+            text, calls = self.script.pop(0)
+        else:
+            text, calls = "done", []
+        return LLMResponse(text=text, tool_calls=calls, input_tokens=100, output_tokens=50)
+
+    def retryable(self):
+        return ()
 
 
-def test_full_loop_happy_path(sample_csv: Path, settings: Settings, monkeypatch):
-    script = [
-        _blocks(("tool", ("run_pandas", {"hypothesis": "age has 999s", "code": "result = (df['age'] == 999).sum()"}))),
-        _blocks(("tool", ("record_finding", VALID_FINDING))),
-        _blocks(("tool", ("finish_audit", {
+def test_full_loop_happy_path(sample_csv: Path, settings: Settings):
+    fake = FakeProvider([
+        ("", [_call("run_pandas", {"hypothesis": "age has 999s", "code": "result = (df['age'] == 999).sum()"})]),
+        ("", [_call("record_finding", VALID_FINDING)]),
+        ("", [_call("finish_audit", {
             "overall_risk": "high",
             "summary": "Placeholder values present.",
             "ready_for_modeling": False,
             "next_steps": ["Clean age column"],
-        }))),
-    ]
-    agent = AuditAgent(settings)
-    fake = FakeMessages(script)
-    monkeypatch.setattr(agent.client, "messages", fake)
+        })]),
+    ])
+    agent = AuditAgent(settings, provider=fake)
 
     report = agent.audit(sample_csv, user_context="churn data, target=churned")
 
@@ -167,38 +153,32 @@ def test_full_loop_happy_path(sample_csv: Path, settings: Settings, monkeypatch)
     assert len(report.findings) == 1
     assert report.summary is not None
     assert report.summary.ready_for_modeling is False
-    assert report.steps_used == 3          # stopped as soon as finish_audit was called
-    assert fake.calls == 3                 # no wasted API calls
+    assert report.steps_used == 3
+    assert fake.calls == 3
     assert report.usage.input_tokens == 300
-    assert len(report.trace) == 3          # full audit trail
+    assert len(report.trace) == 3
     assert "999" in report.to_markdown()
 
 
-def test_loop_stops_at_step_budget(sample_csv: Path, settings: Settings, monkeypatch):
+def test_loop_stops_at_step_budget(sample_csv: Path, settings: Settings):
     """A model that never calls finish_audit must not loop forever."""
-    forever = [
-        _blocks(("tool", ("run_pandas", {"hypothesis": "h", "code": "result = 1"})))
-        for _ in range(50)
-    ]
-    agent = AuditAgent(settings)
-    monkeypatch.setattr(agent.client, "messages", FakeMessages(forever))
+    forever = [("", [_call("run_pandas", {"hypothesis": "h", "code": "result = 1"})]) for _ in range(50)]
+    agent = AuditAgent(settings, provider=FakeProvider(forever))
 
     report = agent.audit(sample_csv)
 
     assert report.steps_used == settings.max_steps
-    assert report.status == "completed"  # degraded, not crashed
+    assert report.status == "completed"
     assert report.summary is None
 
 
-def test_prose_only_response_is_nudged_not_fatal(sample_csv: Path, settings: Settings, monkeypatch):
-    script = [
-        _blocks(("text", "Sure, let me think about this dataset.")),
-        _blocks(("tool", ("record_finding", VALID_FINDING))),
-        _blocks(("tool", ("finish_audit", {
-            "overall_risk": "medium", "summary": "ok", "ready_for_modeling": True}))),
-    ]
-    agent = AuditAgent(settings)
-    monkeypatch.setattr(agent.client, "messages", FakeMessages(script))
+def test_prose_only_response_is_nudged_not_fatal(sample_csv: Path, settings: Settings):
+    agent = AuditAgent(settings, provider=FakeProvider([
+        ("Sure, let me think about this dataset.", []),
+        ("", [_call("record_finding", VALID_FINDING)]),
+        ("", [_call("finish_audit", {
+            "overall_risk": "medium", "summary": "ok", "ready_for_modeling": True})]),
+    ]))
 
     report = agent.audit(sample_csv)
     assert report.status == "completed"
@@ -208,7 +188,7 @@ def test_prose_only_response_is_nudged_not_fatal(sample_csv: Path, settings: Set
 def test_unreadable_file_fails_cleanly(tmp_path: Path, settings: Settings):
     bad = tmp_path / "broken.csv"
     bad.write_bytes(b"\x00\x01\x02not a csv at all")
-    report = AuditAgent(settings).audit(bad)
+    report = AuditAgent(settings, provider=FakeProvider([])).audit(bad)
     assert report.status == "failed"
     assert report.error is not None
-    assert report.findings == []  # no hallucinated output on failure
+    assert report.findings == []

@@ -1,25 +1,29 @@
-"""Working memory for the agent loop.
+﻿"""Working memory for the agent loop.
 
-THE PROBLEM: the Messages API is stateless. Every turn resends the whole
-conversation, so a 14-step agent that dumps DataFrames into the transcript grows
-quadratically in cost and eventually blows the context window.
+Stores a PROVIDER-NEUTRAL transcript. Each provider in `llm.py` renders this to
+its own wire format, so trimming logic is written once instead of twice.
 
-THE FIX (two parts):
-  1. Elide the *content* of old tool results, keeping the last N in full. The
-     model rarely needs step 2's raw output once it's drawn a conclusion from it.
-  2. Never delete a tool_result block. The API requires every `tool_use` to be
-     answered by a `tool_result` with a matching id — deleting one is a 400.
-     So we replace the text, not the block.
+THE PROBLEM: chat APIs are stateless. Every turn resends the whole conversation,
+so an agent that dumps DataFrames into the transcript grows quadratically in
+cost and eventually overflows the context window. That hurts far more on a local
+model, where the window is smaller and you pay for it in seconds, not cents.
 
-Durable state (findings) lives in ToolBox, not here, precisely so trimming
-cannot destroy it.
+THE FIX: elide the *content* of old tool results, keeping the last N in full.
+The model rarely needs step 2's raw output once it has drawn a conclusion.
+Never drop the result entry itself - Anthropic requires every tool_use to be
+answered by a matching tool_result, and an unmatched call is a 400.
+
+Durable state (findings) lives in ToolBox, not here, so trimming cannot
+destroy it. Context and memory are different things.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-ELIDED = "[older tool output elided to save context — conclusions already recorded]"
+from .llm import ToolCall
+
+ELIDED = "[older tool output elided to save context - conclusions already recorded]"
 
 
 class Transcript:
@@ -27,50 +31,34 @@ class Transcript:
         self.messages: list[dict[str, Any]] = []
         self.keep_full_results = keep_full_results
 
-    def add_user(self, content: str | list[dict[str, Any]]) -> None:
-        self.messages.append({"role": "user", "content": content})
+    def add_user(self, text: str) -> None:
+        self.messages.append({"role": "user", "text": text})
 
-    def add_assistant(self, content: list[dict[str, Any]]) -> None:
-        self.messages.append({"role": "assistant", "content": content})
+    def add_assistant(self, text: str, tool_calls: list[ToolCall] | None = None) -> None:
+        self.messages.append(
+            {"role": "assistant", "text": text, "tool_calls": tool_calls or []}
+        )
 
     def add_tool_results(self, results: list[dict[str, Any]]) -> None:
-        """All tool results for one assistant turn go in ONE user message."""
-        self.messages.append({"role": "user", "content": results})
+        """All results for one assistant turn, as {id, name, content, is_error}."""
+        self.messages.append({"role": "tool_results", "results": results})
 
     def for_api(self) -> list[dict[str, Any]]:
-        """Return a trimmed copy safe to send to the API."""
-        # Find indices of messages that carry tool_result blocks.
-        tr_indices = [
-            i
-            for i, m in enumerate(self.messages)
-            if isinstance(m.get("content"), list)
-            and any(
-                isinstance(b, dict) and b.get("type") == "tool_result"
-                for b in m["content"]
-            )
-        ]
-        to_elide = set(tr_indices[: -self.keep_full_results]) if self.keep_full_results else set()
+        """A trimmed copy, safe to hand to a provider."""
+        idxs = [i for i, m in enumerate(self.messages) if m["role"] == "tool_results"]
+        to_elide = set(idxs[: -self.keep_full_results]) if self.keep_full_results else set()
 
         out: list[dict[str, Any]] = []
         for i, msg in enumerate(self.messages):
             if i not in to_elide:
                 out.append(msg)
                 continue
-            blocks = []
-            for b in msg["content"]:
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    # Keep the block + its id; replace only the payload.
-                    blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": b["tool_use_id"],
-                            "content": ELIDED,
-                            **({"is_error": True} if b.get("is_error") else {}),
-                        }
-                    )
-                else:
-                    blocks.append(b)
-            out.append({"role": msg["role"], "content": blocks})
+            out.append(
+                {
+                    "role": "tool_results",
+                    "results": [{**r, "content": ELIDED} for r in msg["results"]],
+                }
+            )
         return out
 
     def __len__(self) -> int:

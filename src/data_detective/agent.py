@@ -11,6 +11,9 @@ AgentExecutor" every time, because you can answer follow-ups about it.
 Frameworks earn their keep at multi-agent orchestration, durable/resumable
 state, and human-in-the-loop checkpoints. This project has none of those. If it
 grew to need resumable runs, LangGraph would be the right migration.
+
+The loop is also provider-agnostic: it talks to an LLMProvider (see llm.py) and
+never learns whether the model is a local Ollama process or a hosted API.
 """
 
 from __future__ import annotations
@@ -20,9 +23,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-import anthropic
-
 from .config import Settings, get_settings
+from .llm import LLMError, LLMProvider, build_provider
 from .logging_setup import get_logger
 from .memory import Transcript
 from .profiler import load_dataframe, profile_dataframe
@@ -72,9 +74,10 @@ RULES
 class AuditAgent:
     """Runs one audit end to end."""
 
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, provider: LLMProvider | None = None):
         self.settings = settings or get_settings()
-        self.client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
+        # Injectable so tests can pass a fake provider instead of a live model.
+        self.provider = provider or build_provider(self.settings)
 
     # -- public API ------------------------------------------------------
     def audit(
@@ -115,13 +118,9 @@ class AuditAgent:
         # --- Phase 2: the agent loop ---
         try:
             self._loop(transcript, toolbox, report, emit)
-        except anthropic.AuthenticationError:
+        except LLMError as e:
             report.status = "failed"
-            report.error = "Anthropic API key is invalid or missing."
-        except anthropic.APIError as e:
-            log.exception("audit.api_error", run_id=run_id)
-            report.status = "failed"
-            report.error = f"LLM API error: {e}"
+            report.error = str(e)
         except Exception as e:
             log.exception("audit.crashed", run_id=run_id)
             report.status = "failed"
@@ -166,16 +165,12 @@ class AuditAgent:
 
             emit(f"Step {step}/{s.max_steps}: thinking...")
             response = self._call_llm(transcript, report)
+            transcript.add_assistant(response.text, response.tool_calls)
 
-            transcript.add_assistant(
-                [b.model_dump(exclude_none=True) for b in response.content]
-            )
-
-            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            tool_uses = response.tool_calls
             if not tool_uses:
                 # Model replied with prose instead of a tool call. Nudge once.
-                text = " ".join(b.text for b in response.content if b.type == "text")
-                log.info("agent.no_tool_use", step=step, text=text[:200])
+                log.info("agent.no_tool_use", step=step, text=response.text[:200])
                 transcript.add_user(
                     "You must act via tools. Call run_pandas to investigate, "
                     "record_finding to log a confirmed issue, or finish_audit to stop."
@@ -183,29 +178,27 @@ class AuditAgent:
                 continue
 
             results = []
-            for block in tool_uses:
+            for call in tool_uses:
                 if toolbox.call_count >= s.max_tool_calls:
                     results.append(
                         self._tool_result(
-                            block.id,
-                            "Tool budget exhausted. Call finish_audit immediately.",
-                            is_error=True,
+                            call, "Tool budget exhausted. Call finish_audit immediately.", True
                         )
                     )
                     continue
 
-                emit(f"Step {step}: {block.name}")
-                text, ok = toolbox.execute(block.name, dict(block.input))
+                emit(f"Step {step}: {call.name}")
+                text, ok = toolbox.execute(call.name, call.arguments)
                 report.trace.append(
                     ToolCallLog(
                         step=step,
-                        tool=block.name,
-                        input=dict(block.input),
+                        tool=call.name,
+                        input=call.arguments,
                         ok=ok,
                         output_preview=text[:300],
                     )
                 )
-                results.append(self._tool_result(block.id, text, is_error=not ok))
+                results.append(self._tool_result(call, text, is_error=not ok))
 
             transcript.add_tool_results(results)
 
@@ -216,44 +209,35 @@ class AuditAgent:
         log.warning("agent.step_limit", steps=s.max_steps)
 
     def _call_llm(self, transcript: Transcript, report: AuditReport):
-        """One API call, with bounded retry on transient failures."""
-        s = self.settings
+        """One provider call, with bounded retry on transient failures."""
+        retryable = getattr(self.provider, "retryable", lambda: ())()
         last_exc: Exception | None = None
 
         for attempt in range(3):
             try:
-                resp = self.client.messages.create(
-                    model=s.model,
-                    max_tokens=s.max_tokens_per_call,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": SYSTEM_PROMPT,
-                            # Prompt caching: the system prompt is resent on every
-                            # one of the ~14 turns. Caching it cuts input cost
-                            # substantially for a one-line change.
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    tools=TOOL_SCHEMAS,
+                resp = self.provider.complete(
+                    system=SYSTEM_PROMPT,
                     messages=transcript.for_api(),
+                    tools=TOOL_SCHEMAS,
                 )
                 self._track_usage(resp, report)
                 return resp
-            except (anthropic.RateLimitError, anthropic.APIConnectionError,
-                    anthropic.InternalServerError) as e:
+            except retryable as e:  # type: ignore[misc]
                 last_exc = e
                 wait = 2 ** attempt
                 log.warning("llm.retry", attempt=attempt + 1, wait=wait, error=str(e)[:200])
                 time.sleep(wait)
 
-        raise last_exc  # type: ignore[misc]
+        raise LLMError(f"Provider failed after 3 attempts: {last_exc}")
 
     def _track_usage(self, resp: Any, report: AuditReport) -> None:
         u: Usage = report.usage
-        u.input_tokens += getattr(resp.usage, "input_tokens", 0) or 0
-        u.output_tokens += getattr(resp.usage, "output_tokens", 0) or 0
-        u.cache_read_tokens += getattr(resp.usage, "cache_read_input_tokens", 0) or 0
+        u.input_tokens += resp.input_tokens
+        u.output_tokens += resp.output_tokens
+
+        if self.settings.provider == "ollama":
+            u.estimated_cost_usd = 0.0  # local inference is free
+            return
 
         pi, po = self.settings.price_per_mtok_input, self.settings.price_per_mtok_output
         if pi or po:
@@ -262,12 +246,5 @@ class AuditAgent:
             )
 
     @staticmethod
-    def _tool_result(tool_use_id: str, text: str, is_error: bool = False) -> dict[str, Any]:
-        block: dict[str, Any] = {
-            "type": "tool_result",
-            "tool_use_id": tool_use_id,
-            "content": text,
-        }
-        if is_error:
-            block["is_error"] = True
-        return block
+    def _tool_result(call, text: str, is_error: bool = False) -> dict[str, Any]:
+        return {"id": call.id, "name": call.name, "content": text, "is_error": is_error}

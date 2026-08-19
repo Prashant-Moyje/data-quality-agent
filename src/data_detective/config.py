@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,12 +19,25 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    anthropic_api_key: str = Field(..., description="From console.anthropic.com")
+    # --- Which brain? "ollama" runs entirely on your machine, no key, no cost.
+    provider: Literal["ollama", "anthropic"] = "ollama"
 
-    # claude-sonnet-5 is the workhorse: strong tool-use + code generation at a
-    # sane price. Swap to claude-opus-5 for harder reasoning, or
-    # claude-haiku-4-5-20251001 to run the loop cheaply while developing.
+    # -- Ollama (local) --
+    # Tool calling is the hard requirement here. Models known to do it well:
+    #   qwen3:8b        <- recommended default, best tool use per GB
+    #   llama3.1:8b     <- solid fallback
+    #   qwen2.5:14b     <- better if you have the VRAM
+    # Small models (<7B) will produce malformed tool calls; see README.
+    ollama_model: str = "qwen3:8b"
+    ollama_host: str = "http://localhost:11434"
+    # Context window. Must be generous: the transcript is resent every turn and
+    # Ollama's default is small enough that the system prompt falls out mid-run.
+    ollama_num_ctx: int = 16384
+
+    # -- Anthropic (hosted) --
+    anthropic_api_key: str = ""
     model: str = "claude-sonnet-5"
+
     max_tokens_per_call: int = 4096
 
     # --- Agent loop guardrails (the thing that separates a demo from a system) ---

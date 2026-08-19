@@ -55,7 +55,8 @@ data-detective data/messy_customers.csv --context "Customer churn export. Target
 
 | Choice | Why | What I rejected |
 |---|---|---|
-| **Claude Sonnet 5** via the official `anthropic` SDK | Strong at tool use and code generation, which is the entire job here. Native prompt caching cuts cost on the resent system prompt. | — |
+| **Pluggable LLM provider** (`llm.py`) — local Ollama by default, Claude optional | Anyone can clone and run this without an account or a bill, which matters more for a public repo than raw model quality. The abstraction also forced the loop to stay provider-agnostic. | Hardcoding one vendor. The two APIs disagree on tool schemas, tool-call IDs, tool-result message shape and token fields — normalising that is the interesting part. |
+| **`qwen3:8b` as the local default** | Best tool-calling reliability per GB at the 8B size. Tool calling is the entire job here, and most small models are poor at it. | Larger local models (RAM-prohibitive), 3B models (drop tool calls under a long transcript) |
 | **No agent framework** | The loop is ~60 lines and is the intellectual content of the project. A framework would hide it behind an abstraction I'd then have to debug. | LangChain, LangGraph, CrewAI. LangGraph would be the right call *if* this needed resumable/durable runs or human approval gates. It doesn't. |
 | **Pydantic v2** | Turns "the model returned something weird" from a silent corruption into a typed error I can feed back to the model so it self-corrects. | Parsing JSON by hand |
 | **Subprocess + AST allowlist** | Defence in depth against prompt injection hidden inside the data itself. | `exec()` in-process (RCE), full Docker-per-call (too slow for a demo) |
@@ -68,7 +69,7 @@ data-detective data/messy_customers.csv --context "Customer churn export. Target
 
 ## Setup
 
-**Requires Python 3.10+ and an Anthropic API key** ([console.anthropic.com](https://console.anthropic.com/settings/keys)).
+**Requires Python 3.10+ and [Ollama](https://ollama.com/download). No API key, no account, no cost — the model runs on your machine.**
 
 ```bash
 git clone https://github.com/Prashant-Moyje/data-detective.git
@@ -77,11 +78,24 @@ cd data-detective
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-cp .env.example .env                  # Windows cmd: copy .env.example .env
-# open .env and paste your ANTHROPIC_API_KEY
+ollama pull qwen3:8b                  # ~5 GB, one time
+
+cp .env.example .env                  # Windows: copy .env.example .env
+# defaults are already set for local Ollama — nothing to edit
 
 python scripts/make_sample_data.py    # generates data/messy_customers.csv
 ```
+
+### Switching to hosted Claude
+
+The agent is provider-agnostic (see `llm.py`). To swap backends, change two lines in `.env` — no code changes:
+
+```bash
+PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Local models are the default because the project should be runnable by anyone who clones it. Claude produces noticeably sharper findings — it's better at spotting subtle issues like target leakage and at writing pandas that works first try — so use it if you have a key.
 
 ### Run it — three ways
 
@@ -110,6 +124,33 @@ curl http://127.0.0.1:8000/audits/a1b2c3d4e5f6
 uvicorn data_detective.api:app          # terminal 1
 streamlit run src/data_detective/ui.py  # terminal 2 -> localhost:8501
 ```
+
+### Verify the sandbox (no API key needed)
+
+```bash
+python scripts/demo_sandbox.py
+```
+
+Runs four real analysis queries and six real attack payloads against the sandbox directly:
+
+```
+LEGITIMATE ANALYSIS — should run
+  RAN   | count placeholder ages     | 302
+  RAN   | target leakage probe       | {0: 0.0, 1: 1.0}
+  RAN   | exact duplicate rows       | 150
+
+ATTACKS — should all be blocked
+  BLOCK | read /etc/passwd           | use of 'open' is not allowed
+  BLOCK | shell out via os           | import of 'os' is not allowed
+  BLOCK | subclass sandbox escape    | '__subclasses__' is not allowed
+  BLOCK | exfiltrate data to disk    | 'to_csv' may touch disk/network
+  BLOCK | infinite loop (DoS)        | TIMEOUT after 5s
+
+  Exfiltration file created?  False
+  10/10 cases behaved as expected
+```
+
+The `{0: 0.0, 1: 1.0}` line is the target-leakage probe: `cancellation_reason` is populated for 100% of churned rows and 0% of retained ones. That column would leak the label straight into any model trained on it.
 
 ### Tests
 ```bash

@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "An autonomous agent that audits datasets for quality problems."
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40",          # official SDK; native tool-use + prompt caching
+    "ollama>=0.3",              # local models — default backend, no key, no cost
+    "anthropic>=0.40",          # optional hosted backend; native tool-use + caching
     "pandas>=2.2",              # the analysis engine the agent drives
     "pyarrow>=15.0",            # parquet support for pandas
     "openpyxl>=3.1",            # xlsx support for pandas
