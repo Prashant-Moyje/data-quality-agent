@@ -1,0 +1,43 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: gt-ollama
+    ports: ["11434:11434"]
+    volumes: [ollama_models:/root/.ollama]
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: gt-api
+    command: uvicorn ground_truth.api:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    environment:
+      PROVIDER: ollama
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: qwen3:4b
+      LOG_JSON: "true"
+      MAX_STEPS: "3"
+    depends_on: [ollama]
+    read_only: true
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 2g
+    pids_limit: 256
+    volumes: [reports:/app/runs]
+    restart: unless-stopped
+
+  ui:
+    build: .
+    container_name: gt-ui
+    command: streamlit run /usr/local/lib/python3.12/site-packages/ground_truth/ui.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+    ports: ["8501:8501"]
+    environment:
+      API_URL: http://api:8000
+    depends_on: [api]
+    mem_limit: 1g
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  reports:
