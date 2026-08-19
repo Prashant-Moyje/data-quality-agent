@@ -32,7 +32,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "rows. This is your only way to see actual data — use it before every "
             "finding you record."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "hypothesis": {
@@ -57,7 +57,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "cite real observed numbers and will be rejected if it does not. "
             "One finding per distinct problem; do not record the same issue twice."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
@@ -102,7 +102,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "investigated the material risks, or when further investigation would "
             "not change the conclusion. Do not pad the audit with trivial checks."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "overall_risk": {
