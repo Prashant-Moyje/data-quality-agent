@@ -177,6 +177,7 @@ data-detective/
 │   ├── make_sample_data.py   # generates the 9-defect evaluation dataset
 │   └──
 
+```
 ---
 
 ## Known limitations
