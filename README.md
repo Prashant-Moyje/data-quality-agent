@@ -82,7 +82,28 @@ cp .env.example .env                  # Windows cmd: copy .env.example .env
 
 python scripts/make_sample_data.py    # generates data/messy_customers.csv
 ```
+## Run with Docker
 
+The whole stack — Ollama, API, and UI — comes up with one command:
+
+```bash
+docker compose up --build
+docker compose exec ollama ollama pull qwen3:8b   # first run only, ~5 GB
+```
+
+UI at `http://localhost:8501`, API docs at `http://localhost:8000/docs`.
+
+Requires ~8 GB allocated to Docker (Settings → Resources → Memory).
+
+### Why the container matters for security
+
+The `api` service runs with `read_only: true`, `cap_drop: ALL`, `no-new-privileges`, a 2 GB memory cap, and `pids_limit: 256`.
+
+This closes a real gap. The OS-level limits in `_runner.py` use `RLIMIT_AS` and `RLIMIT_CPU`, which **do not exist on Windows** — that layer is inert when the app runs natively there. Inside the container those limits are enforced by the kernel regardless of host OS. Docker isn't packaging convenience here; it makes a security layer real that was otherwise decorative.
+
+### No hosted demo
+
+Running the agent needs a local LLM with ~8 GB RAM, and an audit takes tens of minutes on CPU. Free hosting tiers can't supply either, so a public URL would show a sleeping or timing-out app rather than a working one. The CLI output and evaluation scorecard above are the honest demo.
 ### Run it  three ways
 
 **1. CLI (fastest to demo)**
