@@ -69,8 +69,8 @@ ground-truth data/messy_customers.csv --context "Customer churn export. Target c
 **Requires Python 3.10+ and [Ollama](https://ollama.com/download). No API key, no account, no cost - the model runs on your machine.**
 
 ```bash
-git clone https://github.com/Prashant-Moyje/ground-truth.git
-cd ground-truth
+git clone https://github.com/Prashant-Moyje/data-quality-agent.git
+cd data-quality-agent
 
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"                # add [anthropic] for the hosted backend
