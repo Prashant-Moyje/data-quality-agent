@@ -272,7 +272,7 @@ with the AST check bypassed on purpose.
 ## Project structure
 
 ```
-ground-truth/
+data-quality-agent/
 ├── src/ground_truth/
 │   ├── __init__.py
 │   ├── config.py         # fail-fast settings from .env
