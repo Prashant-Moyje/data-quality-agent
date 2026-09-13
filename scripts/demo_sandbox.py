@@ -1,6 +1,6 @@
 """Demonstrate the sandbox: legitimate analysis runs, attacks are blocked.
 
-Requires no API key and makes no network calls — this exercises the security
+Requires no API key and makes no network calls - this exercises the security
 layer directly, not the agent.
 
     python scripts/demo_sandbox.py
@@ -43,7 +43,7 @@ def show(label: str, code: str, expect_ok: bool) -> bool:
     text = (res.result or res.stdout or res.error).replace("\n", " ")[:70]
     correct = res.ok is expect_ok
     verdict = "RAN  " if res.ok else "BLOCK"
-    mark = "✓" if correct else "✗ UNEXPECTED"
+    mark = "OK" if correct else "!! UNEXPECTED"
     print(f"  {verdict} | {label:26} | {text:70} {mark}")
     return correct
 
@@ -53,10 +53,10 @@ def main() -> int:
         print("Run `python scripts/make_sample_data.py` first.")
         return 2
 
-    print("\nLEGITIMATE ANALYSIS — should run\n" + "-" * 110)
+    print("\nLEGITIMATE ANALYSIS - should run\n" + "-" * 110)
     ok = [show(l, c, expect_ok=True) for l, c in LEGITIMATE]
 
-    print("\nATTACKS — should all be blocked\n" + "-" * 110)
+    print("\nATTACKS - should all be blocked\n" + "-" * 110)
     ok += [show(l, c, expect_ok=False) for l, c in ATTACKS]
 
     leaked = Path("/tmp/stolen.csv")
