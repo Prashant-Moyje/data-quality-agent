@@ -7,8 +7,14 @@ real escape technique, not a hypothetical.
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
+from ground_truth import sandbox
 from ground_truth.sandbox import UnsafeCodeError, run_snippet, validate_code
 
 
@@ -21,6 +27,10 @@ SAFE_SNIPPETS = [
     "result = df.groupby('state').size().to_dict()",
     "print(df['plan'].value_counts())",
     "result = df[df.duplicated(subset=['customer_id'], keep=False)].shape[0]",
+    # Regression: the module-attribute denylist must not eat everyday pandas.
+    "result = df.dtypes.to_dict()",
+    "result = df['state'].value_counts().to_dict()",
+    "result = pd.api.types.is_numeric_dtype(df['age'])",
 ]
 
 ATTACKS = [
@@ -55,25 +65,18 @@ def test_syntax_error_is_reported_not_raised_as_crash() -> None:
         validate_code("result = df[")
 
 
-# ---------- Layer 1: KNOWN GAP, module traversal ----------
-# `pd` and `np` are in the snippet's namespace by design, and pandas imports
-# `os` at module level. Walking to it uses no import statement, no dunder and
-# no forbidden name, so validate_code passes it -- and the stripped-builtins
-# subprocess in _runner.py is no defence, because the real module object is
-# already in scope rather than being imported.
+# ---------- Layer 1 + 2: module traversal ----------
+# pandas and numpy both import `os` at module level, and `pd` / `np` are in the
+# snippet namespace by design. So `pd.io.common.os.system(...)` reaches the real
+# os module using no import statement, no dunder and no forbidden name. This was
+# a live escape: it ran, and returned the process working directory.
 #
-# Verified end to end against an unmodified _runner.py:
-#     result = pd.io.common.os.getcwd()
-#     -> {"ok": true, "result": "('/path/to/repo', 14, 'nt')"}
-# os.system / os.popen are reachable by the same route.
-#
-# These are xfail(strict=True) on purpose: they document a real hole without
-# turning the suite red. When validate_code learns to reject module traversal
-# they will start passing, pytest will fail on the unexpected pass, and that is
-# the signal to delete this marker. A denylist cannot close this -- the fix is
-# either a runtime guard that refuses attributes resolving to a module, or
-# accepting the container (no network namespace, read-only fs) as the real
-# boundary and saying so in the README.
+# Closed in two places, and both are tested, because the whole point of layered
+# defence is that each layer holds on its own:
+#   layer 1  validate_code rejects the known module attribute names, so the
+#            model gets an early, readable error it can rewrite against
+#   layer 2  _runner.GuardedModule resolves the attribute and refuses anything
+#            that IS a module, which catches paths nobody enumerated
 
 MODULE_TRAVERSAL_ATTACKS = [
     ("os via pandas.io",      "result = pd.io.common.os.getcwd()"),
@@ -81,16 +84,62 @@ MODULE_TRAVERSAL_ATTACKS = [
     ("os via pandas.util",    "result = pd.util._print_versions.os.getcwd()"),
     ("shell via pandas.io",   "pd.io.common.os.system('id')"),
     ("pickle exec via numpy", "result = np.load('payload.npy', allow_pickle=True)"),
+    ("pandas eval engine",    "result = df.eval('age + 1')"),
+    ("pandas query engine",   "result = df.query('age > 900')"),
 ]
 
 
-@pytest.mark.xfail(strict=True, reason="known gap: module traversal via pd/np is not blocked")
 @pytest.mark.parametrize(
     "name,code", MODULE_TRAVERSAL_ATTACKS, ids=[a[0] for a in MODULE_TRAVERSAL_ATTACKS]
 )
-def test_module_traversal_is_blocked(name: str, code: str) -> None:
+def test_module_traversal_blocked_statically(name: str, code: str) -> None:
     with pytest.raises(UnsafeCodeError):
         validate_code(code)
+
+
+def _run_unvalidated(code: str, csv: Path) -> dict:
+    """Run a snippet in the child process, deliberately SKIPPING validate_code.
+
+    Layer 1 now rejects these before they get here, so bypassing it is the only
+    way to show layer 2 stops them by itself. If someone later loosens the AST
+    rules, these tests keep failing loudly.
+    """
+    runner = Path(sandbox.__file__).parent / "_runner.py"
+    payload = json.dumps({"code": code, "data_path": str(csv), "memory_mb": 512})
+    proc = subprocess.run(
+        [sys.executable, "-I", str(runner)],
+        input=payload, capture_output=True, text=True, timeout=60,
+    )
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+RUNTIME_TRAVERSAL_ATTACKS = [a for a in MODULE_TRAVERSAL_ATTACKS if "os" in a[0] or "shell" in a[0]]
+
+
+@pytest.mark.parametrize(
+    "name,code", RUNTIME_TRAVERSAL_ATTACKS, ids=[a[0] for a in RUNTIME_TRAVERSAL_ATTACKS]
+)
+def test_module_traversal_blocked_at_runtime(name: str, code: str, sample_csv: Path) -> None:
+    out = _run_unvalidated(code, sample_csv)
+    assert out["ok"] is False
+    assert "module traversal blocked" in out["error"]
+
+
+def test_guarded_module_still_allows_real_analysis(sample_csv: Path) -> None:
+    """The guard must not cost the agent the dtype predicates it actually uses."""
+    out = _run_unvalidated("result = pd.api.types.is_numeric_dtype(df['age'])", sample_csv)
+    assert out["ok"] is True, out.get("error")
+    assert out["result"].strip() == "True"
+
+    out = _run_unvalidated("result = float(pd.isna(df['monthly_charge']).mean())", sample_csv)
+    assert out["ok"] is True, out.get("error")
+
+
+def test_guard_fails_closed_on_an_unlisted_submodule(sample_csv: Path) -> None:
+    """`pd.api` is walkable, but only as far as the one path that was allowed."""
+    out = _run_unvalidated("result = pd.api.executors", sample_csv)
+    assert out["ok"] is False
+    assert "module traversal blocked" in out["error"]
 
 
 # ---------- Layer 2/3: actual execution ----------
@@ -131,3 +180,14 @@ def test_output_is_truncated(sample_csv):
     res = run_snippet("result = df", sample_csv)
     assert res.ok
     assert len(res.result) <= 4000  # a 5150-row frame must not flood the context
+
+
+def test_leakage_probe_still_runs_end_to_end(sample_csv):
+    """The query that catches the planted leakage defect must not be collateral."""
+    res = run_snippet(
+        "result = df.groupby('churned')['cancellation_reason']"
+        ".apply(lambda s: s.notna().mean()).to_dict()",
+        sample_csv,
+    )
+    assert res.ok, res.error
+    assert "1.0" in res.result

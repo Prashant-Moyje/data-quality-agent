@@ -134,7 +134,7 @@ streamlit run src/ground_truth/ui.py  # terminal 2 -> localhost:8501
 
 ### Tests
 ```bash
-pytest              # 45 tests (40 pass, 5 xfail), no API key or network required
+pytest              # 57 tests, no API key or network required
 pytest --cov=src
 ```
 The agent tests use a fake Anthropic client. You cannot write reliable tests against a non-deterministic model, so the orchestration is tested with the model stubbed out — budgets, tool dispatch, error recovery, termination.
@@ -167,12 +167,12 @@ network and no GPU, so anyone can reproduce them in about a minute.
 **The test suite** — `pytest`
 
 ```
-40 passed, 5 xfailed
+57 passed
 ```
 
-The five xfails are deliberate. They are sandbox-escape payloads that are *not*
-currently blocked (see Security posture below), marked `xfail(strict=True)` so
-that closing the hole turns them into failures and forces the marker off.
+Seven of those are module-traversal escapes, tested twice over: once against the
+AST layer and once against the child process with the AST layer deliberately
+bypassed, because a layered defence is only layered if each layer holds alone.
 
 **The sandbox** — `python scripts/demo_sandbox.py`
 
@@ -190,9 +190,12 @@ ATTACKS - should all be blocked
   BLOCK | exfiltrate data to disk    | 'to_csv' may touch disk/network; not allowed
   BLOCK | dynamic import             | use of '__import__' is not allowed
   BLOCK | infinite loop (DoS)        | TIMEOUT after 5s
+  BLOCK | os via pandas module       | access to 'os' is not allowed: reaching a module is how a snippet escapes
+  BLOCK | shell via pandas module    | 'system' is not allowed (it executes code or touches disk)
+  BLOCK | pandas eval engine         | 'eval' is not allowed (it executes code or touches disk)
 
   Exfiltration file created?  False  (must be False)
-  10/10 cases behaved as expected
+  13/13 cases behaved as expected
 ```
 
 `{0: 0.0, 1: 1.0}` in the third row is the leakage defect caught in one query:
@@ -214,21 +217,30 @@ ground-truth data/messy_customers.csv   --context "Customer churn export from ou
 The agent executes code it wrote itself. If a CSV contains a column named `__import__('os').system(...)`, naive `exec()` is remote code execution. Three independent layers:
 
 1. **Static** — AST allowlist rejects imports, dunder access, `eval`/`exec`/`open`/`getattr`, and pandas' disk/network methods.
-2. **Runtime** — separate `python -I` subprocess with stripped `__builtins__`, so a bypass lands in a crippled interpreter, not the app's.
+2. **Runtime** — separate `python -I` subprocess with stripped `__builtins__`, so a bypass lands in a crippled interpreter, not the app's. `pd` and `np` are handed over as guarded views that refuse to return a module.
 3. **Resource** — `RLIMIT_AS`, `RLIMIT_CPU`, `RLIMIT_FSIZE=0` (cannot write files at all), plus a wall-clock timeout.
 
 Also: uploads are size-capped and streamed to disk, the user's filename is never used as a path, and the temp file is deleted after the run.
 
-**Known gap — module traversal.** `pd` and `np` are in the snippet's namespace by
-design, and pandas imports `os` at module level. So `pd.io.common.os.system(...)`
-reaches the real `os` module using no import statement, no dunder and no
-forbidden name: layer 1 passes it, and layer 2 is no defence because the module
-object is already in scope rather than being imported. Verified executing
-against an unmodified `_runner.py`. The payloads are in `tests/test_sandbox.py`
-as strict xfails. A denylist cannot close this — the fix is either a runtime
-guard that refuses attributes resolving to a module, or treating the container
-as the real boundary, which today would mean adding network isolation to the
-compose stack, since it has none.
+**Module traversal, and why layer 2 now does real work.** pandas and numpy both
+import `os` at module level, and `pd` / `np` are in the snippet namespace by
+design — so `pd.io.common.os.system(...)` reached the real `os` module using no
+import statement, no dunder and no forbidden name. The AST allowlist passed it,
+and stripped builtins were irrelevant, because the module object was already in
+scope rather than being imported. It ran.
+
+The static layer cannot fix this on its own: it reasons about *names*, and no
+list of forbidden names covers every path a future pandas release might expose.
+So the guarantee lives in `_runner.py`, where `pd` and `np` are wrapped in a view
+that resolves each attribute and refuses anything that turns out to be a module,
+allowing only `pd.api.types` (the dtype predicates, which expose no modules of
+their own). Unknown paths fail closed, so a library upgrade cannot quietly
+reopen the hole. `validate_code` still rejects the known module names first, so
+the model gets a readable error it can rewrite against instead of a runtime
+failure.
+
+Both layers are tested independently — the runtime tests call the child process
+with the AST check bypassed on purpose.
 
 **This is not a true sandbox.** Escaping CPython restricted execution is a known research sport. For production, run the subprocess in a container with no network namespace and a read-only filesystem — the code is already isolated in `_runner.py` specifically so that swap is a deployment change, not a rewrite.
 
@@ -256,7 +268,7 @@ ground-truth/
 ├── scripts/
 │   ├── make_sample_data.py   # generates the 9-defect evaluation dataset
 │   └── demo_sandbox.py       # runs the attack payloads; no API key needed
-├── tests/                    # 45 tests, model stubbed out
+├── tests/                    # 57 tests, model stubbed out
 ├── data/                     # the generated evaluation dataset
 ├── Dockerfile
 ├── docker-compose.yml        # ollama + api + ui, with container hardening
