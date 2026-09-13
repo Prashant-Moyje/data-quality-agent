@@ -198,3 +198,44 @@ def test_report_and_fix_script_render(client: TestClient, stub_agent):
     script = client.get(f"/audits/{run_id}/fix_script.py").text
     assert "import pandas as pd" in script
     assert "df.loc[df['age'] == 999" in script
+
+
+# ---------- the run registry ----------
+
+def test_memory_is_bounded_and_old_runs_still_resolve(client: TestClient, stub_agent, monkeypatch):
+    """Holding every report forever is a leak; evicting them must not 404."""
+    monkeypatch.setattr(api_module, "MAX_RUNS_IN_MEMORY", 3)
+
+    ids = [
+        client.post("/audits", files={"file": (f"f{i}.csv", CSV_BYTES, "text/csv")}).json()["run_id"]
+        for i in range(5)
+    ]
+
+    assert len(api_module._RUNS) == 3
+    assert ids[0] not in api_module._RUNS  # evicted...
+
+    body = client.get(f"/audits/{ids[0]}").json()  # ...but still served, from disk
+    assert body["status"] == "completed"
+    assert body["report"]["run_id"] == ids[0]
+
+
+def test_a_completed_run_survives_losing_the_process(client: TestClient, stub_agent):
+    """Same path a restart takes: nothing in memory, the JSON still on disk."""
+    run_id = client.post(
+        "/audits", files={"file": ("messy.csv", CSV_BYTES, "text/csv")}
+    ).json()["run_id"]
+    api_module._RUNS.clear()
+    api_module._PROGRESS.clear()
+
+    assert client.get(f"/audits/{run_id}").json()["status"] == "completed"
+    assert "# Data Audit" in client.get(f"/audits/{run_id}/report.md").text
+
+
+def test_run_id_is_never_treated_as_a_path(tmp_path: Path, monkeypatch):
+    """The id comes from the URL and is about to become a filename."""
+    secret = tmp_path / "secret.json"
+    secret.write_text("{}")
+    monkeypatch.setattr(api_module.settings, "storage_dir", tmp_path)
+
+    for hostile in ("../secret", "../../etc/passwd", "secret.json", "NOT-HEX"):
+        assert api_module._get_report(hostile) is None

@@ -192,3 +192,57 @@ def test_unreadable_file_fails_cleanly(tmp_path: Path, settings: Settings):
     assert report.status == "failed"
     assert report.error is not None
     assert report.findings == []
+
+
+def test_sandbox_sees_exactly_the_rows_that_were_profiled(sample_csv: Path):
+    """MAX_ROWS_SCANNED capped the profile but not the sandbox, so the agent was
+    reasoning about a 100-row profile while measuring 5150 rows."""
+    capped = Settings(  # type: ignore[call-arg]
+        anthropic_api_key="sk-ant-test", max_steps=4, max_tool_calls=6, max_rows_scanned=100
+    )
+    fake = FakeProvider([
+        ("", [_call("run_pandas", {"hypothesis": "how many rows", "code": "result = len(df)"})]),
+        ("", [_call("record_finding", VALID_FINDING)]),
+        ("", [_call("finish_audit", {
+            "overall_risk": "low", "summary": "ok", "ready_for_modeling": True})]),
+    ])
+
+    report = AuditAgent(capped, provider=fake).audit(sample_csv)
+
+    assert report.profile is not None and report.profile.n_rows == 100
+    measured = next(t for t in report.trace if t.tool == "run_pandas")
+    assert "100" in measured.output_preview
+    assert "5150" not in measured.output_preview
+
+
+def test_the_sandbox_copy_is_cleaned_up(sample_csv: Path, settings: Settings):
+    """The copy holds user data; it must not outlive the run."""
+    import tempfile
+
+    before = set(Path(tempfile.gettempdir()).glob("gt_*"))
+    AuditAgent(settings, provider=FakeProvider([
+        ("", [_call("finish_audit", {
+            "overall_risk": "low", "summary": "ok", "ready_for_modeling": True})]),
+    ])).audit(sample_csv)
+    assert set(Path(tempfile.gettempdir()).glob("gt_*")) == before
+
+
+def test_sandbox_copy_falls_back_to_csv_when_parquet_refuses(
+    sample_csv: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Messy frames are the ones parquet rejects, and messy frames are the job."""
+    from ground_truth.profiler import cache_for_sandbox
+
+    def boom(*_a, **_k):
+        raise ValueError("cannot mix types in column 'x'")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", boom)
+    df = pd.read_csv(sample_csv, nrows=50)
+
+    path = cache_for_sandbox(df, "run123")
+    try:
+        assert path is not None and path.suffix == ".csv"
+        assert len(pd.read_csv(path)) == 50
+    finally:
+        if path:
+            path.unlink(missing_ok=True)

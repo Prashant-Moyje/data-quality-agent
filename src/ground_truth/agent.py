@@ -27,7 +27,7 @@ from .config import Settings, get_settings
 from .llm import LLMError, LLMProvider, build_provider
 from .logging_setup import get_logger
 from .memory import Transcript
-from .profiler import load_dataframe, profile_dataframe
+from .profiler import cache_for_sandbox, load_dataframe, profile_dataframe
 from .schemas import AuditReport, DatasetProfile, ToolCallLog, Usage
 from .tools import TOOL_SCHEMAS, ToolBox
 
@@ -99,6 +99,9 @@ class AuditAgent:
             df = load_dataframe(data_path, self.settings.max_rows_scanned)
             profile: DatasetProfile = profile_dataframe(df, data_path.name)
             report.profile = profile
+            # Hand the sandbox the rows that were actually profiled, written
+            # once, instead of making every snippet re-parse the source file.
+            sandbox_path = cache_for_sandbox(df, run_id) or data_path
             del df  # the agent reads data through the sandbox, not this process
         except Exception as e:
             log.exception("audit.profile_failed", run_id=run_id)
@@ -106,7 +109,7 @@ class AuditAgent:
             report.error = f"Could not read dataset: {e}"
             return report
 
-        toolbox = ToolBox(data_path, profile, self.settings)
+        toolbox = ToolBox(sandbox_path, profile, self.settings)
         transcript = Transcript(keep_full_results=4)
 
         opening = profile.to_prompt_text()
@@ -125,6 +128,9 @@ class AuditAgent:
             log.exception("audit.crashed", run_id=run_id)
             report.status = "failed"
             report.error = f"Unexpected error: {type(e).__name__}: {e}"
+        finally:
+            if sandbox_path != data_path:
+                sandbox_path.unlink(missing_ok=True)
 
         # --- Phase 3: assemble ---
         report.findings = toolbox.findings

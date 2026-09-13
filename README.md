@@ -60,7 +60,7 @@ ground-truth data/messy_customers.csv --context "Customer churn export. Target c
 | **FastAPI + background tasks** | Audits take 30-90s. Async job + polling is the standard shape for agent-backed APIs; a sync endpoint would hit proxy timeouts. | Sync endpoint, Celery (infrastructure with nothing to prove) |
 | **Streamlit as a thin API client** | Holds zero agent logic, which proves the backend is genuinely reusable. | Streamlit calling the agent directly |
 | **structlog** | Agent runs are non-deterministic and multi-step. You need to grep by `run_id` and step. | `print()`, stdlib f-string logging |
-| **In-memory dict + JSON files** | Single-node demo. Swapping in Postgres is a repo change, not a redesign. | Postgres/Redis for a portfolio project |
+| **Bounded in-memory cache + JSON files** | Single-node demo. Memory holds the last 200 reports and falls back to the JSON on disk, so eviction is invisible to a client and a completed run survives a restart. Swapping in Postgres is a repo change, not a redesign. | Postgres/Redis for a portfolio project |
 
 ---
 
@@ -73,7 +73,7 @@ git clone https://github.com/Prashant-Moyje/ground-truth.git
 cd ground-truth
 
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"                # add [anthropic] for the hosted backend
 
 ollama pull qwen3:8b                  # ~5 GB, one time
 
@@ -157,10 +157,10 @@ streamlit run src/ground_truth/ui.py  # terminal 2 -> localhost:8501
 
 ### Tests
 ```bash
-pytest              # 57 tests, no API key or network required
+pytest              # 87 tests, no API key or network required
 pytest --cov=src
 ```
-The agent tests use a fake Anthropic client. You cannot write reliable tests against a non-deterministic model, so the orchestration is tested with the model stubbed out — budgets, tool dispatch, error recovery, termination.
+The agent tests use a fake provider. You cannot write reliable tests against a non-deterministic model, so the orchestration is tested with the model stubbed out — budgets, tool dispatch, error recovery, termination. The API and provider layers are tested the same way: the HTTP contract and both wire formats, with no network and neither SDK required.
 
 ---
 
@@ -190,7 +190,7 @@ network and no GPU, so anyone can reproduce them in about a minute.
 **The test suite** — `pytest`
 
 ```
-57 passed
+87 passed
 ```
 
 Seven of those are module-traversal escapes, tested twice over: once against the
@@ -291,7 +291,7 @@ ground-truth/
 ├── scripts/
 │   ├── make_sample_data.py   # generates the 9-defect evaluation dataset
 │   └── demo_sandbox.py       # runs the attack payloads; no API key needed
-├── tests/                    # 57 tests, model stubbed out
+├── tests/                    # 87 tests, model stubbed out
 ├── data/                     # the generated evaluation dataset
 ├── Dockerfile
 ├── docker-compose.yml        # ollama + api + ui, with container hardening
@@ -301,8 +301,8 @@ ground-truth/
 
 ## Known limitations
 
-- Single-node storage; restarting the API loses in-flight runs.
-- Loads the dataset into memory — capped at 500k rows by default. Larger data would need sampling or a DuckDB backend.
+- Single-node storage. Completed runs are read back from disk, but a run still in flight when the API restarts is lost.
+- Loads the dataset into memory — capped at 500k rows by default, for the profiler and the sandbox alike. Larger data would need sampling or a DuckDB backend.
 - Findings are LLM judgements. The evidence is real (it was measured), but severity is an opinion.
 - No cross-run memory. Auditing the same table twice repeats the work.
 
