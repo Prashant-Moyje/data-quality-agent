@@ -61,7 +61,7 @@ def _persist(report: AuditReport) -> None:
     path.write_text(report.model_dump_json(indent=2))
 
 
-def _run_audit(run_id: str, tmp_path: Path, context: str) -> None:
+def _run_audit(run_id: str, tmp_path: Path, context: str, dataset_name: str) -> None:
     """Executed in a background thread by FastAPI."""
     def progress(msg: str) -> None:
         with _LOCK:
@@ -71,6 +71,10 @@ def _run_audit(run_id: str, tmp_path: Path, context: str) -> None:
         agent = AuditAgent(settings)
         report = agent.audit(tmp_path, user_context=context, on_progress=progress)
         report.run_id = run_id
+        # The agent names the report after the file it was handed, which here is
+        # the temp copy. Put the user's filename back: it is what the report
+        # header shows and what the generated fix script calls read_csv on.
+        report.dataset_name = dataset_name
     except Exception as e:  # never let a thread die silently
         log.exception("api.audit_failed", run_id=run_id)
         report = _RUNS[run_id]
@@ -131,7 +135,7 @@ async def start_audit(
         _RUNS[run_id] = AuditReport(run_id=run_id, dataset_name=safe_name, status="running")
         _PROGRESS[run_id] = "queued"
 
-    background.add_task(_run_audit, run_id, tmp, context[:2000])
+    background.add_task(_run_audit, run_id, tmp, context[:2000], safe_name)
     log.info("api.audit_started", run_id=run_id, dataset=safe_name, bytes=written)
     return StartResponse(run_id=run_id, status="running")
 
