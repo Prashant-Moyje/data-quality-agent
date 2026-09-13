@@ -10,11 +10,16 @@ hallucination from the system.
 
 from __future__ import annotations
 
+import tempfile
+import uuid
 from pathlib import Path
 
 import pandas as pd
 
+from .logging_setup import get_logger
 from .schemas import ColumnProfile, DatasetProfile
+
+log = get_logger(__name__)
 
 
 def load_dataframe(path: Path, max_rows: int) -> pd.DataFrame:
@@ -91,3 +96,38 @@ def profile_dataframe(df: pd.DataFrame, name: str) -> DatasetProfile:
         exact_duplicate_rows=int(df.duplicated().sum()),
         columns=columns,
     )
+
+
+def cache_for_sandbox(df: pd.DataFrame, run_id: str) -> Path | None:
+    """Write the already-parsed frame once, for the sandbox to read.
+
+    Every run_pandas call spawns a fresh interpreter that re-reads the dataset.
+    The fresh interpreter is a security property, not an oversight -- but
+    re-parsing the same CSV a dozen times in one audit is pure waste, and it also
+    hid a correctness gap: the profiler stops at MAX_ROWS_SCANNED, so the sandbox
+    was measuring rows the profile never described, and the agent was comparing
+    the two as if they were the same dataset.
+
+    Parquet preserves the dtypes pandas already inferred. Messy frames are
+    exactly the ones that refuse to serialise (one object column holding two
+    types), so CSV is the fallback, and None means "carry on with the original
+    file" -- slower and uncapped, but never wrong about the data itself.
+    """
+    stem = Path(tempfile.gettempdir()) / f"gt_{run_id}_{uuid.uuid4().hex[:6]}"
+
+    parquet = stem.with_suffix(".parquet")
+    try:
+        df.to_parquet(parquet, index=False)
+        return parquet
+    except Exception as e:  # mixed dtypes, missing pyarrow, read-only tmp...
+        log.info("sandbox_cache.parquet_failed", error=str(e)[:200])
+        parquet.unlink(missing_ok=True)
+
+    csv = stem.with_suffix(".csv")
+    try:
+        df.to_csv(csv, index=False)
+        return csv
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("sandbox_cache.failed", error=str(e)[:200])
+        csv.unlink(missing_ok=True)
+        return None

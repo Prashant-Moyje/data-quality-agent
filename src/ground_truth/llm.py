@@ -292,6 +292,14 @@ def build_provider(settings) -> LLMProvider:
     if not settings.anthropic_api_key:
         raise LLMError("PROVIDER=anthropic but ANTHROPIC_API_KEY is not set.")
     log.info("provider.anthropic", model=settings.model)
-    return AnthropicProvider(
-        settings.anthropic_api_key, settings.model, settings.max_tokens_per_call
-    )
+    try:
+        return AnthropicProvider(
+            settings.anthropic_api_key, settings.model, settings.max_tokens_per_call
+        )
+    except ImportError as e:
+        # The SDK is an extra, so a local-only install lands here rather than on
+        # a bare ImportError from halfway down the import chain.
+        raise LLMError(
+            'PROVIDER=anthropic but the SDK is missing. Install it with: '
+            'pip install "ground-truth[anthropic]"'
+        ) from e

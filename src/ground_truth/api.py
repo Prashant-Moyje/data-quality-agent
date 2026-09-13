@@ -12,9 +12,10 @@ here would add infrastructure to the README for zero demonstrated skill.
 
 from __future__ import annotations
 
-import shutil
+import re
 import tempfile
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 from threading import Lock
 
@@ -37,11 +38,20 @@ app = FastAPI(
     version="0.1.0",
 )
 
-_RUNS: dict[str, AuditReport] = {}
-_PROGRESS: dict[str, str] = {}
+# Completed reports are written to disk, so memory only has to be a cache. It is
+# bounded: a long-lived server that audited thousands of files used to hold every
+# report forever, which is a slow leak rather than a crash and therefore the kind
+# you find in production.
+MAX_RUNS_IN_MEMORY = 200
+
+_RUNS: "OrderedDict[str, AuditReport]" = OrderedDict()
+_PROGRESS: "OrderedDict[str, str]" = OrderedDict()
 _LOCK = Lock()
 
 ALLOWED_SUFFIXES = {".csv", ".parquet", ".xlsx", ".xls", ".txt"}
+# run_ids are uuid4().hex[:12]. Anything else never becomes a path: this value
+# arrives from the URL, and it is about to be used as a filename.
+_RUN_ID = re.compile(r"^[0-9a-f]{6,32}$")
 
 
 class StartResponse(BaseModel):
@@ -61,7 +71,41 @@ def _persist(report: AuditReport) -> None:
     path.write_text(report.model_dump_json(indent=2))
 
 
-def _run_audit(run_id: str, tmp_path: Path, context: str) -> None:
+def _remember(run_id: str, report: AuditReport) -> None:
+    """Cache a report, evicting the oldest. Caller holds _LOCK."""
+    _RUNS[run_id] = report
+    _RUNS.move_to_end(run_id)
+    while len(_RUNS) > MAX_RUNS_IN_MEMORY:
+        evicted, _ = _RUNS.popitem(last=False)
+        _PROGRESS.pop(evicted, None)
+
+
+def _get_report(run_id: str) -> AuditReport | None:
+    """Memory first, then the JSON on disk.
+
+    The disk read is what makes eviction invisible to a client that is still
+    polling, and it means a completed run survives a restart of the API.
+    """
+    with _LOCK:
+        report = _RUNS.get(run_id)
+        if report is not None:
+            _RUNS.move_to_end(run_id)
+            return report
+
+    if not _RUN_ID.match(run_id):
+        return None
+
+    path = settings.storage_dir / f"{run_id}.json"
+    if not path.exists():
+        return None
+    try:
+        return AuditReport.model_validate_json(path.read_text())
+    except Exception:  # a truncated or hand-edited file is a 404, not a 500
+        log.warning("api.unreadable_report", run_id=run_id)
+        return None
+
+
+def _run_audit(run_id: str, tmp_path: Path, context: str, dataset_name: str) -> None:
     """Executed in a background thread by FastAPI."""
     def progress(msg: str) -> None:
         with _LOCK:
@@ -71,6 +115,10 @@ def _run_audit(run_id: str, tmp_path: Path, context: str) -> None:
         agent = AuditAgent(settings)
         report = agent.audit(tmp_path, user_context=context, on_progress=progress)
         report.run_id = run_id
+        # The agent names the report after the file it was handed, which here is
+        # the temp copy. Put the user's filename back: it is what the report
+        # header shows and what the generated fix script calls read_csv on.
+        report.dataset_name = dataset_name
     except Exception as e:  # never let a thread die silently
         log.exception("api.audit_failed", run_id=run_id)
         report = _RUNS[run_id]
@@ -80,7 +128,7 @@ def _run_audit(run_id: str, tmp_path: Path, context: str) -> None:
         tmp_path.unlink(missing_ok=True)  # don't leave user data on disk
 
     with _LOCK:
-        _RUNS[run_id] = report
+        _remember(run_id, report)
         _PROGRESS[run_id] = "done"
     _persist(report)
 
@@ -128,18 +176,18 @@ async def start_audit(
 
     safe_name = Path(file.filename or "dataset").name
     with _LOCK:
-        _RUNS[run_id] = AuditReport(run_id=run_id, dataset_name=safe_name, status="running")
+        _remember(run_id, AuditReport(run_id=run_id, dataset_name=safe_name, status="running"))
         _PROGRESS[run_id] = "queued"
 
-    background.add_task(_run_audit, run_id, tmp, context[:2000])
+    background.add_task(_run_audit, run_id, tmp, context[:2000], safe_name)
     log.info("api.audit_started", run_id=run_id, dataset=safe_name, bytes=written)
     return StartResponse(run_id=run_id, status="running")
 
 
 @app.get("/audits/{run_id}", response_model=StatusResponse)
 def get_audit(run_id: str) -> StatusResponse:
+    report = _get_report(run_id)
     with _LOCK:
-        report = _RUNS.get(run_id)
         progress = _PROGRESS.get(run_id, "")
     if report is None:
         raise HTTPException(404, "Unknown run_id.")
@@ -153,8 +201,7 @@ def get_audit(run_id: str) -> StatusResponse:
 
 @app.get("/audits/{run_id}/report.md", response_class=PlainTextResponse)
 def get_markdown(run_id: str) -> str:
-    with _LOCK:
-        report = _RUNS.get(run_id)
+    report = _get_report(run_id)
     if report is None:
         raise HTTPException(404, "Unknown run_id.")
     if report.status == "running":
@@ -164,8 +211,7 @@ def get_markdown(run_id: str) -> str:
 
 @app.get("/audits/{run_id}/fix_script.py", response_class=PlainTextResponse)
 def get_fix_script(run_id: str) -> str:
-    with _LOCK:
-        report = _RUNS.get(run_id)
+    report = _get_report(run_id)
     if report is None:
         raise HTTPException(404, "Unknown run_id.")
     if report.status == "running":

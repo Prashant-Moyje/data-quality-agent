@@ -1,0 +1,36 @@
+# Overlay: take away the network from the container that runs model-written code.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hardened.yml up --build
+#
+# The README argues that the container is the real security boundary, because
+# CPython restricted execution is escapable in ways a denylist cannot anticipate.
+# That argument only holds if an escape lands somewhere it cannot phone home from.
+# The base stack does not do that -- every service can reach the internet -- so
+# this overlay is what makes the claim true:
+#
+#   ui ---(private)---> api ---(private)---> ollama ---(egress)---> internet
+#
+# `private` is an internal network: containers on it reach each other and nothing
+# else. The api sits on it alone, so a prompt injection that survives the sandbox
+# has nowhere to send what it read. Ollama keeps egress because that is how
+# `ollama pull` fetches a model.
+#
+# TRADE-OFF: the api's published port is dropped here, so http://localhost:8000
+# is gone and the UI at :8501 is the way in. That is deliberate rather than
+# incidental -- publishing a port from an internal network is not something to
+# rely on, so the overlay removes the ambiguity instead of depending on it.
+services:
+  ollama:
+    networks: [private, egress]
+
+  api:
+    networks: [private]
+    ports: !reset []
+
+  ui:
+    networks: [private, egress]
+
+networks:
+  private:
+    internal: true
+  egress: {}
