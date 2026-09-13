@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ground_truth.sandbox import run_snippet  # noqa: E402
+from data_quality_agent.sandbox import run_snippet  # noqa: E402
 
 CSV = Path(__file__).resolve().parents[1] / "data" / "messy_customers.csv"
 

@@ -1,15 +1,15 @@
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: gt-ollama
+    container_name: dqa-ollama
     ports: ["11434:11434"]
     volumes: [ollama_models:/root/.ollama]
     restart: unless-stopped
 
   api:
     build: .
-    container_name: gt-api
-    command: uvicorn ground_truth.api:app --host 0.0.0.0 --port 8000
+    container_name: dqa-api
+    command: uvicorn data_quality_agent.api:app --host 0.0.0.0 --port 8000
     ports: ["8000:8000"]
     environment:
       PROVIDER: ollama
@@ -28,8 +28,8 @@ services:
 
   ui:
     build: .
-    container_name: gt-ui
-    command: streamlit run /usr/local/lib/python3.12/site-packages/ground_truth/ui.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
+    container_name: dqa-ui
+    command: streamlit run /usr/local/lib/python3.12/site-packages/data_quality_agent/ui.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true
     ports: ["8501:8501"]
     environment:
       API_URL: http://api:8000

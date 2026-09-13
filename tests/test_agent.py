@@ -13,12 +13,12 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from ground_truth.agent import AuditAgent
-from ground_truth.llm import LLMResponse, ToolCall
-from ground_truth.config import Settings
-from ground_truth.memory import ELIDED, Transcript
-from ground_truth.profiler import profile_dataframe
-from ground_truth.tools import ToolBox
+from data_quality_agent.agent import AuditAgent
+from data_quality_agent.llm import LLMResponse, ToolCall
+from data_quality_agent.config import Settings
+from data_quality_agent.memory import ELIDED, Transcript
+from data_quality_agent.profiler import profile_dataframe
+from data_quality_agent.tools import ToolBox
 
 
 @pytest.fixture
@@ -219,19 +219,19 @@ def test_the_sandbox_copy_is_cleaned_up(sample_csv: Path, settings: Settings):
     """The copy holds user data; it must not outlive the run."""
     import tempfile
 
-    before = set(Path(tempfile.gettempdir()).glob("gt_*"))
+    before = set(Path(tempfile.gettempdir()).glob("dqa_*"))
     AuditAgent(settings, provider=FakeProvider([
         ("", [_call("finish_audit", {
             "overall_risk": "low", "summary": "ok", "ready_for_modeling": True})]),
     ])).audit(sample_csv)
-    assert set(Path(tempfile.gettempdir()).glob("gt_*")) == before
+    assert set(Path(tempfile.gettempdir()).glob("dqa_*")) == before
 
 
 def test_sandbox_copy_falls_back_to_csv_when_parquet_refuses(
     sample_csv: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Messy frames are the ones parquet rejects, and messy frames are the job."""
-    from ground_truth.profiler import cache_for_sandbox
+    from data_quality_agent.profiler import cache_for_sandbox
 
     def boom(*_a, **_k):
         raise ValueError("cannot mix types in column 'x'")

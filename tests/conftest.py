@@ -11,7 +11,7 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-key-not-real")
 # ...and must not scatter run artefacts through the working tree. Settings reads
 # this at import time, so it has to be set before anything imports config.
 os.environ.setdefault(
-    "STORAGE_DIR", str(Path(tempfile.gettempdir()) / "ground_truth_test_runs")
+    "STORAGE_DIR", str(Path(tempfile.gettempdir()) / "data_quality_agent_test_runs")
 )
 
 

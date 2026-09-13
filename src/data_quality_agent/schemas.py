@@ -197,7 +197,7 @@ class AuditReport(BaseModel):
     def to_fix_script(self) -> str:
         """Concatenate every fix_code into one runnable cleaning script."""
         parts = [
-            '"""Auto-generated cleaning script from Ground Truth.',
+            '"""Auto-generated cleaning script from Data Quality Agent.',
             "",
             "REVIEW BEFORE RUNNING. These are suggestions, not decisions.",
             '"""',

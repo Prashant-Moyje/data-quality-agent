@@ -18,4 +18,4 @@ RUN mkdir -p /app/runs && chown -R appuser:appuser /app/runs
 USER appuser
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 STORAGE_DIR=/app/runs
 EXPOSE 8000 8501
-CMD ["uvicorn", "ground_truth.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "data_quality_agent.api:app", "--host", "0.0.0.0", "--port", "8000"]
