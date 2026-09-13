@@ -35,6 +35,10 @@ ATTACKS = [
     ("exfiltrate data to disk", "df.to_csv('/tmp/stolen.csv')"),
     ("dynamic import", "result = __import__('os').getcwd()"),
     ("infinite loop (DoS)", "while True:\n    pass"),
+    # No import, no dunder, no forbidden name -- this one used to run.
+    ("os via pandas module", "result = pd.io.common.os.getcwd()"),
+    ("shell via pandas module", "pd.io.common.os.system('whoami')"),
+    ("pandas eval engine", "result = df.eval('age + 1')"),
 ]
 
 

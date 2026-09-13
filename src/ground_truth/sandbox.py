@@ -10,8 +10,11 @@ Three independent layers, because any one of them can be bypassed:
 
   1. STATIC  — AST allowlist. Reject imports, dunder access, `eval`/`exec`/
                `open`/`getattr`, and attribute chains used for sandbox escape.
-  2. RUNTIME — separate subprocess with stripped builtins, so a bypass gets a
-               crippled interpreter rather than ours.
+  2. RUNTIME — separate subprocess with stripped builtins, and `pd`/`np` handed
+               over as guarded views that refuse to return a module (see
+               _runner.GuardedModule). Static analysis reasons about names; this
+               layer looks at what an attribute actually evaluates to, which is
+               what catches `pd.io.common.os`.
   3. RESOURCE— OS-level CPU/memory/file-size limits + wall-clock timeout, so an
                infinite loop or fork bomb dies instead of taking down the API.
 
@@ -46,6 +49,33 @@ FORBIDDEN_NAMES = {
 # The only modules the snippet may import (it doesn't need to: pd/np/df are
 # already in scope, but models habitually write `import pandas as pd`).
 ALLOWED_IMPORTS = {"pandas", "numpy", "math", "statistics", "re", "collections", "datetime"}
+
+# Attribute names that walk out of the data layer and into a module. pandas and
+# numpy both import `os` at module level, so `pd.io.common.os.system(...)` needs
+# no import statement, no dunder and no forbidden name -- it just walks there.
+# Blocking the names here gives the model a clear, early error; the guarantee
+# lives in _runner.GuardedModule, which checks what an attribute actually IS.
+MODULE_ATTRS = {
+    # pandas
+    "io", "core", "compat", "util", "tseries", "plotting", "errors", "arrays",
+    "offsets", "testing",
+    # numpy
+    "char", "ctypeslib", "emath", "f2py", "fft", "lib", "linalg", "ma",
+    "polynomial", "random", "rec", "typing",
+    # anything that got imported along the way
+    "os", "sys", "subprocess", "shutil", "socket", "builtins", "importlib",
+    "pickle", "urllib", "requests",
+    # Deliberately NOT here: `dtypes`, `strings`, `exceptions`. They name numpy
+    # submodules, but `df.dtypes` is everyday pandas and blocking it by name
+    # would cost the agent a real query. np.dtypes is still refused at runtime,
+    # where the guard looks at what an attribute IS, not what it is called.
+}
+# Callables that execute code or touch disk wherever they are reached from.
+# pandas' eval/query run expressions through eval(); numpy's loaders unpickle.
+DANGEROUS_ATTRS = {
+    "eval", "query", "load", "save", "savez", "savez_compressed", "memmap",
+    "fromfile", "tofile", "genfromtxt", "loadtxt", "savetxt", "system", "popen",
+}
 
 
 class UnsafeCodeError(ValueError):
@@ -96,6 +126,19 @@ def validate_code(code: str) -> None:
         elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             # Blocks the classic `().__class__.__bases__[0].__subclasses__()` escape.
             raise UnsafeCodeError(f"access to dunder attribute {node.attr!r} is not allowed")
+
+        elif isinstance(node, ast.Attribute) and node.attr in MODULE_ATTRS:
+            raise UnsafeCodeError(
+                f"access to {node.attr!r} is not allowed: reaching a module is how a "
+                f"snippet escapes the sandbox. Work through `df`, or use a column as "
+                f"df[{node.attr!r}] if that is what you meant."
+            )
+
+        elif isinstance(node, ast.Attribute) and node.attr in DANGEROUS_ATTRS:
+            raise UnsafeCodeError(
+                f"{node.attr!r} is not allowed (it executes code or touches disk). "
+                f"Use ordinary pandas indexing instead, e.g. df[df['age'] > 900]."
+            )
 
         # Pandas has its own footguns that touch the filesystem / network.
         elif isinstance(node, ast.Attribute) and node.attr.startswith(("to_", "read_")):
