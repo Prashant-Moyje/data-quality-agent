@@ -101,6 +101,29 @@ The `api` service runs with `read_only: true`, `cap_drop: ALL`, `no-new-privileg
 
 This closes a real gap. The OS-level limits in `_runner.py` use `RLIMIT_AS` and `RLIMIT_CPU`, which **do not exist on Windows** — that layer is inert when the app runs natively there. Inside the container those limits are enforced by the kernel regardless of host OS. Docker isn't packaging convenience here; it makes a security layer real that was otherwise decorative.
 
+### Taking the network away from the sandbox
+
+`read_only` and `cap_drop` stop a container writing or escalating; neither stops
+it talking. The argument that the container is the real boundary only holds if an
+escape lands somewhere it cannot phone home from, so there is an overlay that
+gives the api container no route out:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.hardened.yml up --build
+```
+
+```
+ui ---(private)---> api ---(private)---> ollama ---(egress)---> internet
+```
+
+`private` is an internal network. The api -- the only container that executes
+model-written code -- sits on it alone, so a prompt injection that survives the
+sandbox has nowhere to send what it read. Ollama keeps egress, because that is
+how `ollama pull` fetches a model.
+
+The overlay drops the api's published port, so with it the UI at :8501 is the way
+in and `http://localhost:8000/docs` is not exposed. The base stack is unchanged.
+
 ### No hosted demo
 
 Running the agent needs a local LLM with ~8 GB RAM, and an audit takes tens of minutes on CPU. Free hosting tiers can't supply either, so a public URL would show a sleeping or timing-out app rather than a working one. The CLI output and the measured results in [What I measured](#what-i-measured) are the honest demo.
