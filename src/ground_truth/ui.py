@@ -40,7 +40,7 @@ with st.sidebar:
     )
     try:
         h = requests.get(f"{API_URL}/health", timeout=3).json()
-        st.success(f"API up · {h.get('model')}")
+        st.success(f"API up · {h.get('provider', '?')} · {h.get('model')}")
     except Exception:
         st.error(f"API unreachable at {API_URL}\n\nStart it with:\n`uvicorn ground_truth.api:app`")
 

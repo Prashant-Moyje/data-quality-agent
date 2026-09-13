@@ -55,6 +55,44 @@ def test_syntax_error_is_reported_not_raised_as_crash() -> None:
         validate_code("result = df[")
 
 
+# ---------- Layer 1: KNOWN GAP, module traversal ----------
+# `pd` and `np` are in the snippet's namespace by design, and pandas imports
+# `os` at module level. Walking to it uses no import statement, no dunder and
+# no forbidden name, so validate_code passes it -- and the stripped-builtins
+# subprocess in _runner.py is no defence, because the real module object is
+# already in scope rather than being imported.
+#
+# Verified end to end against an unmodified _runner.py:
+#     result = pd.io.common.os.getcwd()
+#     -> {"ok": true, "result": "('/path/to/repo', 14, 'nt')"}
+# os.system / os.popen are reachable by the same route.
+#
+# These are xfail(strict=True) on purpose: they document a real hole without
+# turning the suite red. When validate_code learns to reject module traversal
+# they will start passing, pytest will fail on the unexpected pass, and that is
+# the signal to delete this marker. A denylist cannot close this -- the fix is
+# either a runtime guard that refuses attributes resolving to a module, or
+# accepting the container (no network namespace, read-only fs) as the real
+# boundary and saying so in the README.
+
+MODULE_TRAVERSAL_ATTACKS = [
+    ("os via pandas.io",      "result = pd.io.common.os.getcwd()"),
+    ("os via pandas.compat",  "result = pd.compat.os.environ"),
+    ("os via pandas.util",    "result = pd.util._print_versions.os.getcwd()"),
+    ("shell via pandas.io",   "pd.io.common.os.system('id')"),
+    ("pickle exec via numpy", "result = np.load('payload.npy', allow_pickle=True)"),
+]
+
+
+@pytest.mark.xfail(strict=True, reason="known gap: module traversal via pd/np is not blocked")
+@pytest.mark.parametrize(
+    "name,code", MODULE_TRAVERSAL_ATTACKS, ids=[a[0] for a in MODULE_TRAVERSAL_ATTACKS]
+)
+def test_module_traversal_is_blocked(name: str, code: str) -> None:
+    with pytest.raises(UnsafeCodeError):
+        validate_code(code)
+
+
 # ---------- Layer 2/3: actual execution ----------
 
 def test_executes_and_returns_result(sample_csv):

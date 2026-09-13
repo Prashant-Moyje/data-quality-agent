@@ -14,9 +14,8 @@ services:
     environment:
       PROVIDER: ollama
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: qwen3:4b
+      OLLAMA_MODEL: qwen3:8b
       LOG_JSON: "true"
-      MAX_STEPS: "3"
     depends_on: [ollama]
     read_only: true
     tmpfs: ["/tmp:size=512m,mode=1777"]

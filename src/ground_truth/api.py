@@ -87,7 +87,11 @@ def _run_audit(run_id: str, tmp_path: Path, context: str) -> None:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "model": settings.model}
+    # Report the model that will actually run. `settings.model` is the Anthropic
+    # field, so returning it unconditionally told every local user they were
+    # talking to Claude while inference happened on their own machine.
+    model = settings.ollama_model if settings.provider == "ollama" else settings.model
+    return {"status": "ok", "provider": settings.provider, "model": model}
 
 
 @app.post("/audits", response_model=StartResponse, status_code=202)
