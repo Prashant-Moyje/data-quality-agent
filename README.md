@@ -1,11 +1,11 @@
-# Ground Truth
+# Data Quality Agent
 
 **An autonomous agent that audits a dataset the way a senior data scientist would: it forms hypotheses about what's broken, writes its own pandas code to test them, runs that code in a sandbox, and reports only what it can prove with numbers.**
 
 You give it a CSV. It gives you a severity-ranked list of data quality problems, each backed by evidence it actually measured — plus a runnable cleaning script.
 
 ```bash
-ground-truth data/messy_customers.csv --context "Customer churn export. Target column is churned."
+dqa data/messy_customers.csv --context "Customer churn export. Target column is churned."
 ```
 
 ---
@@ -74,6 +74,7 @@ cd data-quality-agent
 
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"                # add [anthropic] for the hosted backend
+# two names for the same command are installed: data-quality-agent, and dqa
 
 ollama pull qwen3:8b                  # ~5 GB, one time
 
@@ -131,14 +132,14 @@ Running the agent needs a local LLM with ~8 GB RAM, and an audit takes tens of m
 
 **1. CLI (fastest to demo)**
 ```bash
-ground-truth data/messy_customers.csv \
+dqa data/messy_customers.csv \
   --context "Customer churn export from our CRM. Target is churned. One row per customer." \
   --out report.md --fix-script cleanup.py
 ```
 
 **2. API**
 ```bash
-uvicorn ground_truth.api:app --reload
+uvicorn data_quality_agent.api:app --reload
 # docs at http://127.0.0.1:8000/docs
 
 curl -X POST http://127.0.0.1:8000/audits \
@@ -151,8 +152,8 @@ curl http://127.0.0.1:8000/audits/a1b2c3d4e5f6
 
 **3. Full UI** (two terminals)
 ```bash
-uvicorn ground_truth.api:app          # terminal 1
-streamlit run src/ground_truth/ui.py  # terminal 2 -> localhost:8501
+uvicorn data_quality_agent.api:app          # terminal 1
+streamlit run src/data_quality_agent/ui.py  # terminal 2 -> localhost:8501
 ```
 
 ### Tests
@@ -230,7 +231,9 @@ finds on its own. That needs a full local run — tens of minutes on CPU — and
 number is not published here yet. Reproduce it with:
 
 ```bash
-ground-truth data/messy_customers.csv   --context "Customer churn export from our CRM. Target is churned."   --out report.md
+dqa data/messy_customers.csv \
+  --context "Customer churn export from our CRM. Target is churned." \
+  --out report.md
 ```
 
 ---
@@ -273,7 +276,7 @@ with the AST check bypassed on purpose.
 
 ```
 data-quality-agent/
-├── src/ground_truth/
+├── src/data_quality_agent/
 │   ├── __init__.py
 │   ├── config.py         # fail-fast settings from .env
 │   ├── logging_setup.py  # structlog

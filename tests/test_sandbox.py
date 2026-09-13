@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from ground_truth import sandbox
-from ground_truth.sandbox import UnsafeCodeError, run_snippet, validate_code
+from data_quality_agent import sandbox
+from data_quality_agent.sandbox import UnsafeCodeError, run_snippet, validate_code
 
 
 # ---------- Layer 1: static analysis ----------

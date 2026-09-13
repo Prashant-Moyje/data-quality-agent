@@ -113,7 +113,7 @@ def cache_for_sandbox(df: pd.DataFrame, run_id: str) -> Path | None:
     types), so CSV is the fallback, and None means "carry on with the original
     file" -- slower and uncapped, but never wrong about the data itself.
     """
-    stem = Path(tempfile.gettempdir()) / f"gt_{run_id}_{uuid.uuid4().hex[:6]}"
+    stem = Path(tempfile.gettempdir()) / f"dqa_{run_id}_{uuid.uuid4().hex[:6]}"
 
     parquet = stem.with_suffix(".parquet")
     try:

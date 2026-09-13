@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ground_truth.profiler import load_dataframe, profile_dataframe
+from data_quality_agent.profiler import load_dataframe, profile_dataframe
 
 
 def test_profile_matches_pandas(sample_csv):

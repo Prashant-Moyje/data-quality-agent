@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import pytest
 
-from ground_truth.config import Settings
-from ground_truth.llm import (
+from data_quality_agent.config import Settings
+from data_quality_agent.llm import (
     AnthropicProvider,
     LLMError,
     OllamaProvider,
     ToolCall,
     build_provider,
 )
-from ground_truth.memory import ELIDED, Transcript
+from data_quality_agent.memory import ELIDED, Transcript
 
 TOOLS = [
     {"name": "run_pandas", "description": "run code", "parameters": {"type": "object"}},

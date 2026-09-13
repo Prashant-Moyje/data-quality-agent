@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ground_truth import api as api_module
-from ground_truth.schemas import (
+from data_quality_agent import api as api_module
+from data_quality_agent.schemas import (
     AuditReport,
     AuditSummary,
     Category,
@@ -112,10 +112,10 @@ def test_oversized_upload_is_rejected(client: TestClient, monkeypatch: pytest.Mo
 
 
 def test_oversized_upload_leaves_nothing_behind(client: TestClient, monkeypatch):
-    before = set(Path(tempfile.gettempdir()).glob("dd_*"))
+    before = set(Path(tempfile.gettempdir()).glob("dqa_*"))
     monkeypatch.setattr(api_module.settings, "max_upload_mb", 0)
     client.post("/audits", files={"file": ("big.csv", CSV_BYTES, "text/csv")})
-    assert set(Path(tempfile.gettempdir()).glob("dd_*")) == before
+    assert set(Path(tempfile.gettempdir()).glob("dqa_*")) == before
 
 
 # ---------- the async job shape ----------
@@ -142,7 +142,7 @@ def test_uploaded_data_is_deleted_after_the_run(client: TestClient, stub_agent):
     run_id = client.post(
         "/audits", files={"file": ("messy.csv", CSV_BYTES, "text/csv")}
     ).json()["run_id"]
-    assert not list(Path(tempfile.gettempdir()).glob(f"dd_{run_id}*"))
+    assert not list(Path(tempfile.gettempdir()).glob(f"dqa_{run_id}*"))
 
 
 def test_original_filename_is_never_used_as_a_path(client: TestClient, stub_agent):
@@ -156,7 +156,7 @@ def test_original_filename_is_never_used_as_a_path(client: TestClient, stub_agen
     # ...and the generated script must load the user's file, not the temp copy.
     script = client.get(f"/audits/{run_id}/fix_script.py").text
     assert "evil.csv" in script
-    assert "dd_" not in script
+    assert "dqa_" not in script
 
 
 def test_a_failing_agent_surfaces_as_a_failed_report(client: TestClient, monkeypatch):

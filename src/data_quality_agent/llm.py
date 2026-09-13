@@ -301,5 +301,5 @@ def build_provider(settings) -> LLMProvider:
         # a bare ImportError from halfway down the import chain.
         raise LLMError(
             'PROVIDER=anthropic but the SDK is missing. Install it with: '
-            'pip install "ground-truth[anthropic]"'
+            'pip install "data-quality-agent[anthropic]"'
         ) from e
