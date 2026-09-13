@@ -125,6 +125,10 @@ how `ollama pull` fetches a model.
 The overlay drops the api's published port, so with it the UI at :8501 is the way
 in and `http://localhost:8000/docs` is not exposed. The base stack is unchanged.
 
+Stated plainly: the topology is verified by rendering the merged compose config,
+not by running it. Bring it up and check `docker exec dqa-api curl -m 5
+https://pypi.org` fails while `curl -m 5 http://ollama:11434/api/tags` succeeds.
+
 ### No hosted demo
 
 Running the agent needs a local LLM with ~8 GB RAM, and an audit takes tens of minutes on CPU. Free hosting tiers can't supply either, so a public URL would show a sleeping or timing-out app rather than a working one. The CLI output and the measured results in [What I measured](#what-i-measured) are the honest demo.
